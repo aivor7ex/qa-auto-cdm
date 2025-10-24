@@ -1,0 +1,14 @@
+{
+    "admin": {
+        "login": "auto_admin",
+        "password": "auto_admin",
+        "ip": "10.100.104.151",
+        "cluster_state": "standalone",
+        "type": "software",
+        "email": "test@codemaster.pro"
+    },
+    "user": {
+        "login": "user",
+        "password": "user"
+    }
+}

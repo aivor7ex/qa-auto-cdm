@@ -1,0 +1,28 @@
+/security_audit/reports/test_mailing.py:
+test_page_mailing_filter_negative_e_mail_sql_injection - добавили валидацию со стороны UI (переделать SQL инъекцию или сделать проверку без ожидание http запроса)
+
+Добавить тесты на частичную фильтрацию (не полное совпадение)
+
+/security_audit/events/test_settings.py:
+test_page_settings_filter_positive_user_admin - Проверяет позитивную фильтрацию по Пользователю: admin
+test_page_settings_filter_positive_user_admin_insensitive - Проверяет позитивную фильтрацию по Пользователю: ADMIN (case-insensitive)
+
+/security_audit/events/test_access.py:
+test_go_to_events_with_500_rows - Надо ли? (увеличивает времмя выполнения тестов, но повышает точность проверки фильтрации)
+
+/security_audit/events/test_security.py:
+test_page_security_filter_positive_user_system
+
+/dashboard/test_dashboard.py:
+test_dashboard_date_incomplete_day - Проверяет валидацию поля даты при неполном вводе (только день)
+test_dashboard_date_incomplete_year - Проверяет валидацию поля даты при неполном вводе (незавершенный год)
+test_dashboard_date_incomplete_time - Проверяет валидацию поля даты при неполном вводе (незавершенное время)
+test_dashboard_date_start_after_end - Проверяет валидацию, когда начальная дата позже конечной
+
+!!!
+Скрыты 2 позитивных теста (где хард код) по фильтрам в security_audit/events/*
+!!!
+
+!!!
+Скрыта вся сортировка кроме даты в security_audit/events/*
+!!!

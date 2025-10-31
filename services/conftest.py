@@ -1,25 +1,31 @@
 """
 ===================================================================================
-CONFTEST.PY - Главный файл конфигурации pytest для тестирования API
+CONFTEST.PY - Конфигурация pytest для тестирования REST API
 ===================================================================================
 
-Этот файл автоматически загружается pytest и настраивает всё окружение для тестов.
+Модуль конфигурации pytest, автоматически загружаемый при запуске тестов.
+Определяет фикстуры, хуки и вспомогательные функции для тестовой инфраструктуры.
 
-ОСНОВНЫЕ КОМПОНЕНТЫ:
-1. Фикстуры - переиспользуемые компоненты (api_client, auth_token, и т.д.)
-2. Хуки pytest - функции, которые вызываются на разных этапах тестирования
-3. Вспомогательные функции - для валидации, обработки ошибок, и т.д.
+АРХИТЕКТУРА:
+1. Фикстуры - переиспользуемые компоненты для инициализации тестового окружения
+2. Хуки pytest - обработчики событий жизненного цикла тестов
+3. Вспомогательные функции - валидация схем, обработка сетевых ошибок
 
-КЛЮЧЕВЫЕ КОНЦЕПЦИИ:
-- Фикстура = функция, которая подготавливает данные для теста
-- scope="module" = создаётся один раз на файл с тестами
-- scope="session" = создаётся один раз на весь запуск pytest
-- autouse=True = применяется автоматически ко всем тестам
+ОБЛАСТЬ ВИДИМОСТИ ФИКСТУР:
+- scope="session" - инициализация один раз на всю сессию pytest
+- scope="module" - инициализация один раз на тестовый модуль
+- scope="function" - инициализация для каждого теста (по умолчанию)
+- autouse=True - автоматическое применение без явного указания в параметрах
 
-ПРИМЕР ЗАПУСКА:
-    pytest services/core/ --mirada-host=192.168.1.100
-    pytest services/core/interfaces.py --mirada-host=192.168.1.100 --request-timeout=120
-    pytest services/core/ --mirada-host=192.168.1.100 --resume
+ИСПОЛЬЗОВАНИЕ:
+    pytest services/<service>/ --mirada-host=<IP> [опции]
+
+ПАРАМЕТРЫ:
+    --mirada-host      IP адрес для SSH туннелирования (обязательный)
+    --host             Переопределение хоста (для отладки)
+    --port             Переопределение порта (для отладки)
+    --request-timeout  Таймаут HTTP запросов в секундах (по умолчанию: 60)
+    --resume           Пропуск уже выполненных тестов
 ===================================================================================
 """
 
@@ -66,20 +72,24 @@ pytest_plugins = [
 # ===================================================================================
 def pytest_addoption(parser):
     """
-    Добавляет пользовательские параметры командной строки для pytest.
+    Регистрирует пользовательские параметры командной строки pytest.
 
-    ЧТО ДЕЛАЕТ:
-    Позволяет передавать параметры при запуске тестов:
-    - --host и --port: переопределить адрес сервера
-    - --request-timeout: таймаут HTTP запросов (секунды)
-    - --mirada-host: IP адрес для SSH туннелей (ОБЯЗАТЕЛЬНО!)
-    - --resume: продолжить тестирование, пропуская уже пройденные тесты
+    ФУНКЦИОНАЛЬНОСТЬ:
+    Расширяет стандартный парсер аргументов pytest следующими опциями:
+    - --host: переопределение хоста API сервера
+    - --port: переопределение порта API сервера
+    - --request-timeout: установка таймаута HTTP запросов (секунды)
+    - --mirada-host: IP адрес для установки SSH туннелей (обязательный параметр)
+    - --resume: режим продолжения выполнения с пропуском успешных тестов
 
-    ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ:
-        pytest services/core/ --mirada-host=192.168.1.100
-        pytest services/core/ --mirada-host=192.168.1.100 --request-timeout=120
-        pytest services/core/ --host=127.0.0.1 --port=4006
-        pytest services/core/ --mirada-host=192.168.1.100 --resume
+    ИСПОЛЬЗОВАНИЕ:
+        pytest services/<service>/ --mirada-host=<IP>
+        pytest services/<service>/ --mirada-host=<IP> --request-timeout=120
+        pytest services/<service>/ --host=127.0.0.1 --port=4006
+        pytest services/<service>/ --mirada-host=<IP> --resume
+
+    ПАРАМЕТРЫ:
+        parser: Объект ArgumentParser для регистрации опций
     """
     parser.addoption(
         "--host",
@@ -112,38 +122,37 @@ def pytest_addoption(parser):
 @pytest.fixture(scope="module")
 def api_base_url(request, tunnel_manager):
     """
-    Автоматически определяет правильный URL для API на основе пути к тесту.
+    Определяет базовый URL API на основе структуры директорий тестового модуля.
 
-    ЧТО ДЕЛАЕТ:
-    1. Проверяет наличие обязательного параметра --mirada-host
-    2. Определяет имя сервиса из пути к тестовому файлу
-       Например: services/core/interfaces.py → сервис "core"
-    3. Находит конфигурацию сервиса в qa_constants.py (SERVICES)
-    4. Создаёт SSH туннель к удалённому серверу
-    5. Формирует и возвращает полный URL
+    АЛГОРИТМ:
+    1. Валидация обязательного параметра --mirada-host
+    2. Извлечение имени сервиса из пути файла тестового модуля
+       Шаблон: services/<service_name>/<test_file>.py
+    3. Загрузка конфигурации сервиса из qa_constants.SERVICES
+    4. Инициализация SSH туннеля через tunnel_manager
+    5. Формирование полного URL: http://<host>:<port><base_path>
 
-    ВАЖНО:
-    - Параметр --mirada-host ОБЯЗАТЕЛЕН для безопасного SSH подключения
-    - Все тесты выполняются через SSH туннели с использованием ключей
-    - Если указаны --host и --port, они переопределяют конфигурацию
+    ТРЕБОВАНИЯ:
+    - Параметр --mirada-host обязателен для SSH аутентификации
+    - SSH ключи должны быть настроены для passwordless доступа
+    - Параметры --host и --port переопределяют автоматическую конфигурацию
 
-    ПРИМЕР РАБОТЫ:
-        Тест: services/core/interfaces.py
-            ↓
-        Сервис: "core"
-            ↓
-        Конфигурация: {"host": "127.0.0.1", "port": 4006, "base_path": "/api"}
-            ↓
-        SSH туннель: localhost:4006 → 192.168.1.100:4006
-            ↓
-        Результат: "http://127.0.0.1:4006/api"
+    ПРОЦЕСС РАЗРЕШЕНИЯ URL:
+        Путь файла: services/core/interfaces.py
+            → Извлечение: service_name = "core"
+            → Конфигурация: SERVICES["core"] = {host, port, base_path}
+            → SSH туннель: 127.0.0.1:<local_port> → <remote_host>:<remote_port>
+            → URL: http://127.0.0.1:<local_port><base_path>
 
     ПАРАМЕТРЫ:
-        request: Объект pytest request для доступа к параметрам командной строки
-        tunnel_manager: Менеджер SSH туннелей (фикстура)
+        request: Объект pytest.FixtureRequest для доступа к опциям CLI
+        tunnel_manager: Фикстура SSHTunnelManager (scope="session")
 
     ВОЗВРАЩАЕТ:
-        str: Полный URL для API (например, "http://127.0.0.1:4006/api")
+        str: Полный базовый URL API (например, "http://127.0.0.1:4006/api")
+
+    ИСКЛЮЧЕНИЯ:
+        pytest.fail: При отсутствии --mirada-host или некорректной конфигурации
     """
     # ШАГ 1: Проверяем обязательный параметр --mirada-host
     # Без него тесты не смогут подключиться к серверу безопасно
@@ -279,15 +288,20 @@ def api_base_url(request, tunnel_manager):
 @pytest.fixture(scope="module")
 def request_timeout(request):
     """
-    Возвращает таймаут для HTTP запросов из параметров командной строки.
+    Извлекает значение таймаута HTTP запросов из параметров CLI.
 
-    ЧТО ДЕЛАЕТ:
-    Берёт значение --request-timeout (в секундах) и преобразует в число.
-    Если не указан, используется значение по умолчанию: 60 секунд.
+    ФУНКЦИОНАЛЬНОСТЬ:
+    Преобразует строковое значение опции --request-timeout в целочисленное
+    значение секунд для использования в HTTP клиенте.
 
-    ПРИМЕР:
-        pytest --request-timeout=120  → 120 секунд
-        pytest                        → 60 секунд (по умолчанию)
+    ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ:
+        60 секунд (определено в pytest_addoption)
+
+    ПАРАМЕТРЫ:
+        request: Объект pytest.FixtureRequest
+
+    ВОЗВРАЩАЕТ:
+        int: Таймаут в секундах
     """
     return int(request.config.getoption("--request-timeout"))
 
@@ -298,27 +312,28 @@ def request_timeout(request):
 @pytest.fixture(scope="module")
 def api_client(api_base_url, request_timeout):
     """
-    Создаёт и настраивает HTTP клиент для отправки запросов к API.
+    Инициализирует настроенный HTTP клиент для взаимодействия с API.
 
-    ЧТО ДЕЛАЕТ:
-    1. Создаёт сессию requests (умный HTTP клиент)
-    2. Устанавливает базовые заголовки (Content-Type, Accept)
-    3. Переопределяет метод request для автоматического формирования полного URL
-    4. Устанавливает таймаут по умолчанию для всех запросов
+    КОНФИГУРАЦИЯ:
+    1. Создание сессии requests.Session с постоянным connection pooling
+    2. Установка стандартных HTTP заголовков:
+       - Content-Type: application/json
+       - Accept: application/json
+       - Connection: close
+    3. Переопределение метода request() для автоматического формирования абсолютных URL
+    4. Применение таймаута по умолчанию ко всем HTTP запросам
 
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ В ТЕСТЕ:
-        def test_get_interfaces(api_client):
-            # Вместо: requests.get("http://127.0.0.1:4006/api/interfaces")
-            # Пишем просто:
-            response = api_client.get("/interfaces")
+    ИСПОЛЬЗОВАНИЕ:
+        def test_endpoint(api_client):
+            response = api_client.get("/endpoint")
             assert response.status_code == 200
 
     ПАРАМЕТРЫ:
-        api_base_url: Базовый URL API (фикстура)
-        request_timeout: Таймаут запросов в секундах (фикстура)
+        api_base_url: Базовый URL API (фикстура scope="module")
+        request_timeout: Таймаут в секундах (фикстура scope="module")
 
     ВОЗВРАЩАЕТ:
-        requests.Session: Настроенный HTTP клиент
+        requests.Session: Сконфигурированный HTTP клиент с автоматическим URL resolution
     """
     # Создаём HTTP сессию
     session = requests.Session()
@@ -445,29 +460,32 @@ def agent_base_url(request, tunnel_manager):
 @pytest.fixture(scope="module")
 def auth_token(request):
     """
-    Получает токен авторизации для защищённых эндпоинтов API.
+    Выполняет аутентификацию и возвращает токен доступа для защищённых эндпоинтов.
 
-    ЧТО ДЕЛАЕТ:
-    1. Берёт учётные данные (логин/пароль) из конфигурации
-    2. Выполняет логин через функцию login() из auth_utils
-    3. Возвращает токен для использования в заголовках запросов
+    ПРОЦЕСС:
+    1. Извлечение учётных данных из конфигурации pytest
+    2. Выполнение аутентификации через auth_utils.login()
+    3. Получение и кэширование токена на уровне модуля
 
-    ВАЖНО:
-    - Токен создаётся один раз на весь модуль (scope="module")
-    - По умолчанию используются: username="admin", password="admin"
-    - Токен - это специальная строка, которая доказывает, что вы авторизованы
+    УЧЁТНЫЕ ДАННЫЕ ПО УМОЛЧАНИЮ:
+        username: "admin"
+        password: "admin"
+        agent: "local"
 
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ:
-        def test_protected_endpoint(api_client, auth_token):
+    ИСПОЛЬЗОВАНИЕ:
+        def test_authenticated_endpoint(api_client, auth_token):
             headers = {"x-access-token": auth_token}
             response = api_client.get("/protected", headers=headers)
             assert response.status_code == 200
 
     ПАРАМЕТРЫ:
-        request: Объект pytest request
+        request: Объект pytest.FixtureRequest
 
     ВОЗВРАЩАЕТ:
-        str: Токен авторизации
+        str: JWT токен или аналогичный идентификатор сессии
+
+    ИСКЛЮЧЕНИЯ:
+        pytest.fail: При ошибке аутентификации
     """
     username = getattr(request.config.option, 'username', 'admin')
     password = getattr(request.config.option, 'password', 'admin')
@@ -486,26 +504,29 @@ def auth_token(request):
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """
-    Хук pytest, который срабатывает после выполнения каждого теста.
-    Собирает информацию о последнем HTTP запросе для диагностики ошибок.
+    Хук pytest для расширения отчётов о тестах информацией о HTTP запросах.
 
-    ЧТО ДЕЛАЕТ:
-    Когда тест падает, этот хук автоматически добавляет в отчёт:
-    - Информацию о последнем HTTP запросе (метод + URL)
-    - Информацию об ответе сервера (статус + тело)
+    ФУНКЦИОНАЛЬНОСТЬ:
+    Перехватывает создание отчёта о выполнении теста и добавляет детали
+    последнего HTTP запроса в случае падения теста с использованием api_client.
 
-    КАК РАБОТАЕТ:
-    1. Ждёт завершения теста
-    2. Проверяет, упал ли тест и использовал ли он api_client
-    3. Если да - добавляет секции с деталями запроса/ответа в отчёт
+    ДОБАВЛЯЕМАЯ ИНФОРМАЦИЯ:
+    - Метод и URL последнего HTTP запроса
+    - Статус код и тело ответа сервера
 
-    ПАРАМЕТРЫ ХУКА:
-        tryfirst=True - выполняется раньше других хуков
-        hookwrapper=True - оборачивает выполнение других хуков
+    АЛГОРИТМ:
+    1. Выполнение базовой логики создания отчёта (yield)
+    2. Проверка условий: report.when == "call" AND report.failed AND "api_client" in fixtures
+    3. Извлечение информации о запросе из api_client.last_request
+    4. Добавление секций в report.longrepr
 
-    ПАРАМЕТРЫ ФУНКЦИИ:
-        item: Тестовый элемент pytest
-        call: Информация о вызове теста
+    ПАРАМЕТРЫ ДЕКОРАТОРА:
+        tryfirst=True: Приоритетное выполнение перед другими хуками
+        hookwrapper=True: Обёртка вокруг выполнения других хуков
+
+    ПАРАМЕТРЫ:
+        item: pytest.Item - тестовый элемент
+        call: pytest.CallInfo - информация о вызове теста
     """
     # Позволяем другим хукам выполниться и получаем результат
     outcome = yield
@@ -542,25 +563,29 @@ def pytest_runtest_makereport(item, call):
 @pytest.fixture(autouse=True)
 def capture_last_request(request):
     """
-    Автоматически перехватывает все HTTP запросы и сохраняет последний.
+    Перехватывает HTTP запросы api_client для диагностики ошибок тестов.
 
-    ЧТО ДЕЛАЕТ:
-    Это "шпион", который записывает каждый HTTP запрос, чтобы при падении теста
-    показать, какой запрос был отправлен последним и какой ответ пришёл.
+    НАЗНАЧЕНИЕ:
+    Монкейпатчит метод send() у requests.Session для сохранения информации
+    о последнем выполненном HTTP запросе и соответствующем ответе.
 
-    КАК РАБОТАЕТ:
-    1. Проверяет, использует ли тест api_client
-    2. Если да - подменяет метод send() на обёртку
-    3. Обёртка сохраняет каждый запрос в атрибуте last_request
-    4. После теста восстанавливает оригинальный метод
+    МЕХАНИЗМ:
+    1. Валидация наличия фикстуры api_client в тесте
+    2. Сохранение оригинального метода send()
+    3. Установка обёртки, записывающей PreparedRequest и Response
+    4. Восстановление оригинального метода после выполнения теста
+
+    ВЗАИМОДЕЙСТВИЕ:
+    Работает совместно с хуком pytest_runtest_makereport для добавления
+    деталей последнего запроса в отчёты о падениях тестов.
 
     ПАРАМЕТРЫ:
-        autouse=True - применяется автоматически ко всем тестам
-        request: Объект pytest request
+        autouse=True: Автоматическое применение ко всем тестам
+        request: Объект pytest.FixtureRequest
 
-    ВАЖНО:
-    Эта фикстура работает в паре с хуком pytest_runtest_makereport
-    для вывода информации о последнем запросе при падении теста.
+    АТРИБУТЫ API_CLIENT:
+        last_request: PreparedRequest последнего выполненного запроса
+        last_request.response: Response объект соответствующего ответа
     """
     # Если тест не использует api_client, ничего не делаем
     if "api_client" not in request.fixturenames:
@@ -738,39 +763,42 @@ def agent_verification(agent_base_url):
 # ===================================================================================
 def validate_schema(data, schema):
     """
-    Рекурсивно проверяет соответствие данных схеме.
+    Рекурсивная валидация структуры данных согласно определённой схеме.
 
-    ЧТО ДЕЛАЕТ:
-    Проверяет, что JSON имеет правильную структуру:
-    - Все обязательные поля присутствуют
-    - Типы данных соответствуют ожидаемым
-    - Необязательные поля (если есть) имеют правильный тип
+    ФУНКЦИОНАЛЬНОСТЬ:
+    - Проверка наличия всех обязательных полей
+    - Валидация типов данных полей
+    - Проверка необязательных полей при их наличии
+    - Поддержка множественных допустимых типов для поля
 
     ФОРМАТ СХЕМЫ:
-        schema = {
+        {
             "required": {
-                "name": str,        # Обязательное поле name типа str
-                "age": int,         # Обязательное поле age типа int
-                "active": bool      # Обязательное поле active типа bool
+                "<field_name>": <type> | (<type1>, <type2>, ...),
+                ...
             },
             "optional": {
-                "email": str,       # Необязательное поле email типа str
-                "phone": (str, int) # Может быть str или int
+                "<field_name>": <type> | (<type1>, <type2>, ...),
+                ...
             }
         }
 
-    ПРИМЕРЫ:
-        # Правильно ✓
-        validate_schema({"name": "John", "age": 30}, schema)
-        validate_schema({"name": "John", "age": 30, "email": "john@example.com"}, schema)
+    ПРИМЕРЫ СХЕМ:
+        # Простая схема
+        {"required": {"name": str, "age": int}}
 
-        # Ошибка ✗
-        validate_schema({"name": "John"}, schema)  # Нет обязательного age
-        validate_schema({"name": "John", "age": "thirty"}, schema)  # age не int
+        # Схема с множественными типами
+        {"required": {"id": (int, str)}}
+
+        # Схема с опциональными полями
+        {"required": {"name": str}, "optional": {"email": str}}
 
     ПАРАМЕТРЫ:
-        data: Данные для проверки (dict или list)
-        schema: Схема с описанием структуры
+        data: dict или list - валидируемые данные
+        schema: dict - схема валидации
+
+    ИСКЛЮЧЕНИЯ:
+        AssertionError: При несоответствии данных схеме
     """
     # Если данные - это список, проверяем каждый элемент
     if isinstance(data, list):
@@ -818,37 +846,38 @@ def validate_schema(data, schema):
 @pytest.fixture
 def attach_curl_on_fail(api_client, api_base_url):
     """
-    Контекст-менеджер, который при падении теста показывает точную cURL команду.
+    Генератор контекст-менеджера для автоматического формирования cURL при ошибках.
 
-    ЧТО ДЕЛАЕТ:
-    Когда тест падает внутри блока with, автоматически:
-    1. Формирует cURL команду для воспроизведения запроса
-    2. Показывает её в сообщении об ошибке
-    3. Позволяет скопировать и запустить команду в терминале
+    НАЗНАЧЕНИЕ:
+    Перехват исключений в блоке with и формирование эквивалентной cURL команды
+    для ручного воспроизведения неудачного HTTP запроса.
 
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ:
-        def test_create_interface(api_client, attach_curl_on_fail):
-            payload = {"name": "eth0", "type": "physical"}
+    МЕХАНИЗМ:
+    1. Перехват любого исключения в контексте with
+    2. Извлечение параметров запроса (endpoint, payload, headers, method)
+    3. Формирование полной cURL команды
+    4. Вызов pytest.fail с форматированным сообщением
 
-            with attach_curl_on_fail("/interfaces", payload, method="POST"):
-                response = api_client.post("/interfaces", json=payload)
+    ИСПОЛЬЗОВАНИЕ:
+        def test_endpoint(api_client, attach_curl_on_fail):
+            payload = {"key": "value"}
+            with attach_curl_on_fail("/endpoint", payload, method="POST"):
+                response = api_client.post("/endpoint", json=payload)
                 assert response.status_code == 200
 
-    ЕСЛИ ТЕСТ УПАДЁТ, УВИДИТЕ:
-        Тест упал с ошибкой: AssertionError...
-
+    ВЫВОД ПРИ ОШИБКЕ:
         ================= Failed Test Request (cURL) ================
-        curl -X POST 'http://127.0.0.1:4006/api/interfaces' \
+        curl -X POST 'http://127.0.0.1:4006/api/endpoint' \
           -H 'Content-Type: application/json' \
-          -d '{"name": "eth0", "type": "physical"}'
+          -d '{"key": "value"}'
         =============================================================
 
     ПАРАМЕТРЫ:
-        api_client: HTTP клиент (фикстура)
-        api_base_url: Базовый URL API (фикстура)
+        api_client: requests.Session фикстура
+        api_base_url: str базовый URL фикстура
 
     ВОЗВРАЩАЕТ:
-        function: Контекст-менеджер для использования с with
+        Callable: Контекст-менеджер с сигнатурой (endpoint, payload, headers, method)
     """
     def _build_curl(endpoint: str, json_data=None, headers=None, method: str = "POST") -> str:
         """
@@ -943,31 +972,29 @@ def attach_curl_on_fail(api_client, api_base_url):
 @pytest.fixture(scope="session")
 def tunnel_manager(request):
     """
-    Создаёт и управляет SSH туннелями для всей сессии тестирования.
+    Инициализирует и управляет SSH туннелями на протяжении сессии pytest.
 
-    ЧТО ДЕЛАЕТ:
-    1. Создаёт менеджер SSH туннелей при первом использовании
-    2. Туннели остаются открытыми на протяжении всей сессии pytest
-    3. Автоматически закрывает все туннели при завершении тестов
+    ФУНКЦИОНАЛЬНОСТЬ:
+    - Создание единственного экземпляра SSHTunnelManager для всей сессии
+    - Установка SSH туннелей для проксирования TCP соединений
+    - Автоматическое закрытие всех туннелей при завершении сессии
 
-    ЧТО ТАКОЕ SSH ТУННЕЛЬ:
-        Безопасное соединение к удалённому серверу через SSH.
-        Позволяет обращаться к удалённому порту через localhost:
+    SSH ТУННЕЛИРОВАНИЕ:
+        Перенаправление локального порта на удалённый порт через SSH:
+        127.0.0.1:<local_port> → SSH → <remote_host>:<remote_port>
 
-        localhost:4006  ===SSH===>  192.168.1.100:4006
-                         туннель
-
-        Теперь запрос к localhost:4006 на самом деле идёт к 192.168.1.100:4006
-
-    ВАЖНО:
-        scope="session" - создаётся один раз на весь запуск pytest,
-        а не для каждого теста или модуля. Это экономит время и ресурсы.
+    ЖИЗНЕННЫЙ ЦИКЛ:
+        scope="session" обеспечивает единственную инициализацию на весь запуск pytest,
+        минимизируя накладные расходы на установку SSH соединений.
 
     ПАРАМЕТРЫ:
-        request: Объект pytest request
+        request: pytest.FixtureRequest объект
 
     ВОЗВРАЩАЕТ:
-        SSHTunnelManager или None: Менеджер туннелей или None, если --mirada-host не указан
+        SSHTunnelManager | None: Экземпляр менеджера или None при отсутствии --mirada-host
+
+    CLEANUP:
+        Автоматическое закрытие всех туннелей в блоке finally после завершения сессии
     """
     # Получаем IP адрес Mirada хоста из параметров командной строки
     mirada_host = request.config.getoption("--mirada-host")
@@ -997,39 +1024,39 @@ def tunnel_manager(request):
 # ===================================================================================
 def handle_negative_response_safely(api_client, method, url, expected_status, **kwargs):
     """
-    Безопасно выполняет HTTP запросы, которые ожидаются с ошибками (400, 404, 500).
+    Устойчивое выполнение HTTP запросов с ожидаемыми ошибочными статусами.
 
-    ЗАЧЕМ ЭТО НУЖНО:
-    При получении ошибок (400, 404, 500) сервер может внезапно закрыть соединение.
-    Обычный requests.get() может упасть с ConnectionError.
-    Эта функция делает несколько попыток и обрабатывает обрывы соединения.
+    НАЗНАЧЕНИЕ:
+    Обработка HTTP запросов к эндпоинтам, возвращающим 4xx/5xx статусы,
+    с автоматическим retry механизмом при обрывах TCP соединения.
 
-    КАК РАБОТАЕТ:
-    1. Делает попытку выполнить запрос
-    2. Если соединение оборвалось - ждёт и пробует снова (до 3 попыток)
-    3. Если все попытки исчерпаны - создаёт mock ответ с ожидаемым статусом
+    ПРОБЛЕМАТИКА:
+    При возврате ошибочных HTTP статусов серверы могут преждевременно закрывать
+    TCP соединения, приводя к ConnectionError/ChunkedEncodingError в клиенте.
 
-    КОГДА ИСПОЛЬЗОВАТЬ:
-    В негативных тестах, где ожидается ошибка от сервера:
-    - Неправильные параметры (400)
-    - Несуществующий ресурс (404)
-    - Внутренняя ошибка сервера (500)
+    АЛГОРИТМ:
+    1. Выполнение HTTP запроса с специализированными заголовками
+    2. При ConnectionError: экспоненциальная задержка и повторная попытка (до 3 раз)
+    3. При исчерпании попыток: генерация mock Response с ожидаемым статусом
+
+    ПРИМЕНЕНИЕ:
+    Негативное тестирование валидации входных данных, проверки прав доступа,
+    обработки некорректных запросов.
 
     ПАРАМЕТРЫ:
-        api_client: HTTP клиент
-        method: HTTP метод (GET, POST, PUT, DELETE)
-        url: URL для запроса
-        expected_status: Ожидаемый статус-код (или список статус-кодов)
-        **kwargs: Дополнительные параметры запроса
+        api_client: requests.Session экземпляр
+        method: str HTTP метод (GET, POST, PUT, DELETE, PATCH)
+        url: str относительный или абсолютный URL
+        expected_status: int | list[int] ожидаемый статус-код
+        **kwargs: Параметры для передачи в requests (headers, json, data, etc.)
 
     ВОЗВРАЩАЕТ:
-        requests.Response: Ответ сервера или mock ответ
+        requests.Response: Реальный или mock объект ответа
 
-    ПРИМЕР:
-        response = handle_negative_response_safely(
-            api_client, "GET", "/invalid-endpoint", 404
-        )
-        assert response.status_code == 404
+    RETRY СТРАТЕГИЯ:
+        Попытка 1: немедленно
+        Попытка 2: +0.5s задержка
+        Попытка 3: +1.0s задержка
     """
     max_attempts = 3  # Максимум 3 попытки
 
@@ -1115,39 +1142,37 @@ def handle_negative_response_safely(api_client, method, url, expected_status, **
 # ===================================================================================
 def robust_multipart_post(api_client, url, files=None, data=None, headers=None, expected_status=400, timeout=30):
     """
-    Безопасная отправка файлов (multipart/form-data) с обработкой обрывов.
+    Устойчивая отправка multipart/form-data запросов с обработкой обрывов соединения.
 
-    ЗАЧЕМ ЭТО НУЖНО:
-    При загрузке файлов используется формат multipart/form-data.
-    Сервер может оборвать соединение при ошибках валидации.
-    Эта функция обрабатывает такие ситуации.
+    НАЗНАЧЕНИЕ:
+    Специализированная функция для POST запросов с файлами, использующая
+    multipart/form-data encoding с автоматической обработкой ConnectionError.
 
-    КАК РАБОТАЕТ:
-    1. Временно удаляет Content-Type (requests сам установит multipart/form-data)
-    2. Добавляет стабильные заголовки
-    3. Использует handle_negative_response_safely для отправки
-    4. Восстанавливает оригинальный Content-Type
+    ОСОБЕННОСТИ MULTIPART:
+    - requests автоматически устанавливает Content-Type с boundary
+    - Требуется временное удаление глобального Content-Type заголовка
+    - Восстановление оригинального Content-Type после выполнения
+
+    МЕХАНИЗМ:
+    1. Сохранение и удаление Content-Type из session.headers
+    2. Делегирование к handle_negative_response_safely с параметром files
+    3. Восстановление Content-Type в блоке finally
 
     ПАРАМЕТРЫ:
-        api_client: HTTP клиент
-        url: URL для запроса
-        files: Словарь файлов {"field_name": file_object}
-        data: Дополнительные поля формы
-        headers: HTTP заголовки
-        expected_status: Ожидаемый статус-код (обычно 400 для негативных тестов)
-        timeout: Таймаут запроса в секундах
+        api_client: requests.Session экземпляр
+        url: str URL для загрузки
+        files: dict[str, file-like] | None файлы для отправки
+        data: dict[str, str] | None дополнительные поля формы
+        headers: dict[str, str] | None HTTP заголовки
+        expected_status: int ожидаемый статус-код (по умолчанию 400)
+        timeout: int таймаут в секундах
 
     ВОЗВРАЩАЕТ:
-        requests.Response: Ответ сервера
+        requests.Response: Объект ответа сервера
 
-    ПРИМЕР:
-        with open("test.txt", "rb") as f:
-            response = robust_multipart_post(
-                api_client, "/upload",
-                files={"file": f},
-                data={"name": "test"},
-                expected_status=400
-            )
+    ПРИМЕНЕНИЕ:
+        Тестирование валидации загружаемых файлов, проверка типов MIME,
+        тестирование ограничений размера файлов.
     """
     # Сохраняем оригинальный Content-Type
     original_content_type = api_client.headers.get('Content-Type')
@@ -1183,26 +1208,27 @@ def robust_multipart_post(api_client, url, files=None, data=None, headers=None, 
 
 
 # ===================================================================================
-# ФИКСТУРЫ 15-16: ОБЁРТКИ ДЛЯ ФУНКЦИЙ
+# ФИКСТУРЫ 15-16: АДАПТЕРЫ ФУНКЦИЙ
 # ===================================================================================
 @pytest.fixture
 def stable_negative_request():
     """
-    Фикстура для выполнения стабильных негативных запросов.
+    Адаптер функции handle_negative_response_safely в pytest фикстуру.
 
-    ЧТО ДЕЛАЕТ:
-    Просто возвращает функцию handle_negative_response_safely,
-    делая её доступной как фикстуру pytest.
+    НАЗНАЧЕНИЕ:
+    Предоставление доступа к функции обработки негативных запросов
+    через механизм dependency injection pytest.
 
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ:
-        def test_invalid_request(api_client, stable_negative_request):
+    ИСПОЛЬЗОВАНИЕ:
+        def test_validation_error(api_client, stable_negative_request):
             response = stable_negative_request(
-                api_client, "GET", "/invalid", 404
+                api_client, "POST", "/endpoint", 400,
+                json={"invalid": "data"}
             )
-            assert response.status_code == 404
+            assert response.status_code == 400
 
     ВОЗВРАЩАЕТ:
-        function: Функция handle_negative_response_safely
+        Callable: Ссылка на handle_negative_response_safely
     """
     return handle_negative_response_safely
 
@@ -1210,23 +1236,24 @@ def stable_negative_request():
 @pytest.fixture
 def stable_multipart_post():
     """
-    Фикстура для выполнения стабильных multipart POST запросов.
+    Адаптер функции robust_multipart_post в pytest фикстуру.
 
-    ЧТО ДЕЛАЕТ:
-    Просто возвращает функцию robust_multipart_post,
-    делая её доступной как фикстуру pytest.
+    НАЗНАЧЕНИЕ:
+    Предоставление доступа к функции multipart POST запросов
+    через механизм dependency injection pytest.
 
-    ПРИМЕР ИСПОЛЬЗОВАНИЯ:
-        def test_file_upload(api_client, stable_multipart_post):
-            with open("test.txt", "rb") as f:
+    ИСПОЛЬЗОВАНИЕ:
+        def test_file_validation(api_client, stable_multipart_post):
+            with open("invalid.exe", "rb") as f:
                 response = stable_multipart_post(
                     api_client, "/upload",
-                    files={"file": f},
-                    expected_status=400
+                    files={"document": f},
+                    expected_status=415
                 )
+            assert "Unsupported Media Type" in response.text
 
     ВОЗВРАЩАЕТ:
-        function: Функция robust_multipart_post
+        Callable: Ссылка на robust_multipart_post
     """
     return robust_multipart_post
 
@@ -1237,26 +1264,30 @@ def stable_multipart_post():
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     """
-    Глобальная обработка параметра --resume.
+    Хук pytest для глобальной конфигурации режима продолжения тестирования.
 
-    ЧТО ДЕЛАЕТ:
-    Проверяет, указан ли параметр --resume при запуске pytest,
-    и сохраняет этот флаг в конфигурации для использования другими компонентами.
+    НАЗНАЧЕНИЕ:
+    Извлечение и сохранение флага --resume в объекте конфигурации pytest
+    для доступа из плагинов логирования и механизма пропуска тестов.
 
-    ЗАЧЕМ НУЖЕН --resume:
-    Позволяет продолжить тестирование, пропуская уже пройденные тесты.
-    Полезно при длительных тестовых прогонах, которые были прерваны.
+    ФУНКЦИОНАЛЬНОСТЬ --resume:
+    Режим инкрементального выполнения с пропуском успешно выполненных тестов,
+    основанный на анализе logs/passed_tests.json.
 
-    КАК РАБОТАЕТ:
-    1. Читает значение параметра --resume
-    2. Сохраняет его в config.resume_enabled
-    3. Плагины test_pass_logger и test_failure_logger используют этот флаг
+    ПРИМЕНЕНИЕ:
+    Продолжение прерванных длительных тестовых прогонов без повторного
+    выполнения уже пройденных тестов.
+
+    МЕХАНИЗМ:
+    1. Извлечение boolean значения опции --resume
+    2. Установка атрибута config.resume_enabled
+    3. Использование в test_pass_logger и test_failure_logger плагинах
+
+    ПАРАМЕТРЫ ДЕКОРАТОРА:
+        tryfirst=True: Приоритетное выполнение перед другими конфигурационными хуками
 
     ПАРАМЕТРЫ:
-        config: Объект конфигурации pytest
-
-    ПРИМЕР:
-        pytest services/core/ --mirada-host=192.168.1.100 --resume
+        config: pytest.Config объект конфигурации
     """
     resume_enabled = config.getoption('--resume')
     config.resume_enabled = resume_enabled
@@ -1265,23 +1296,35 @@ def pytest_configure(config):
 # ===================================================================================
 # КОНЕЦ ФАЙЛА conftest.py
 # ===================================================================================
-# Все основные компоненты закомментированы и объяснены.
 #
-# ИТОГОВАЯ СХЕМА РАБОТЫ:
-# 1. pytest_addoption - регистрирует параметры командной строки
-# 2. pytest_configure - настраивает флаг --resume
-# 3. tunnel_manager - создаёт SSH туннели (scope=session)
-# 4. api_base_url - определяет URL сервиса (scope=module)
-# 5. request_timeout - берёт таймаут из параметров (scope=module)
-# 6. api_client - создаёт HTTP клиент (scope=module)
-# 7. agent_base_url - определяет URL агента (scope=module)
-# 8. auth_token - получает токен авторизации (scope=module)
-# 9. capture_last_request - перехватывает запросы (autouse=True)
-# 10. pytest_runtest_makereport - собирает отчёт о тесте
-# 11. agent_verification - функция для проверки через агента
-# 12. validate_schema - валидация схемы JSON
-# 13. attach_curl_on_fail - показывает curl при падении теста
-# 14. handle_negative_response_safely - безопасная обработка ошибок
-# 15. robust_multipart_post - безопасная загрузка файлов
-# 16. stable_negative_request, stable_multipart_post - фикстуры-обёртки
+# АРХИТЕКТУРА КОМПОНЕНТОВ:
+#
+# ИНИЦИАЛИЗАЦИЯ PYTEST:
+# 1. pytest_addoption        - Регистрация CLI параметров (--mirada-host, --resume, etc.)
+# 2. pytest_configure         - Конфигурация глобальных параметров (resume_enabled)
+#
+# СЕССИОННЫЕ КОМПОНЕНТЫ (scope="session"):
+# 3. tunnel_manager          - Управление SSH туннелями на протяжении сессии
+#
+# МОДУЛЬНЫЕ ФИКСТУРЫ (scope="module"):
+# 4. api_base_url            - Автоматическое определение базового URL сервиса
+# 5. request_timeout         - Извлечение таймаута HTTP запросов из CLI
+# 6. api_client              - Инициализация настроенного requests.Session
+# 7. agent_base_url          - Определение URL для агента валидации
+# 8. auth_token              - Выполнение аутентификации и получение токена
+#
+# ФУНКЦИОНАЛЬНЫЕ ФИКСТУРЫ (scope="function"):
+# 9. capture_last_request    - Монкейпатчинг для перехвата HTTP запросов (autouse=True)
+# 10. attach_curl_on_fail    - Генератор контекст-менеджера для cURL команд
+# 11. agent_verification     - Фабрика функции валидации через агента
+# 12. stable_negative_request - Адаптер handle_negative_response_safely
+# 13. stable_multipart_post  - Адаптер robust_multipart_post
+#
+# ХУКИ PYTEST:
+# 14. pytest_runtest_makereport - Расширение отчётов информацией о HTTP запросах
+#
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ:
+# 15. validate_schema              - Рекурсивная валидация JSON структур
+# 16. handle_negative_response_safely - Устойчивое выполнение запросов с 4xx/5xx
+# 17. robust_multipart_post        - Устойчивая отправка multipart/form-data
 # ===================================================================================

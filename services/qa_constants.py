@@ -1,25 +1,57 @@
-"""Stores constants for API endpoint paths."""
+"""
+===================================================================================
+QA_CONSTANTS - Конфигурационные константы для тестовой инфраструктуры
+===================================================================================
 
-# API Endpoint Paths
+Централизованное хранилище конфигурационных параметров для:
+- Эндпоинтов REST API микросервисов
+- Параметров SSH туннелирования
+- Конфигурации агента валидации
+- OpenFlow идентификаторов
+
+СТРУКТУРА ДАННЫХ:
+    SERVICES: dict[str, dict | list[dict]] - Конфигурация микросервисов
+    TUNNEL_CONFIG: dict[str, tuple[int, int, str]] - Параметры SSH туннелей
+    AGENT: dict[str, str | int] - Конфигурация агента валидации
+
+ИСПОЛЬЗОВАНИЕ:
+    from qa_constants import SERVICES, TUNNEL_CONFIG, AGENT
+    api_config = SERVICES["core"]
+    tunnel_params = TUNNEL_CONFIG["core"]
+===================================================================================
+"""
+
+# ===================================================================================
+# OPENFLOW КОНСТАНТЫ
+# ===================================================================================
+# Относительные пути к OpenFlow API эндпоинтам
 OPENFLOW_RULES_PATH = "openflowRules"
 OPENFLOW_GATEWAYS_PATH = "openflowGateways"
 CUSTOM_FEATURE_PATH = "custom-feature"
-OPENFLOW_HOPS_PATH = "openflowHops" 
+OPENFLOW_HOPS_PATH = "openflowHops"
 NO_CLEANUP_FEATURE_PATH = "no-cleanup-needed"
 
-# OpenFlow Cookie Prefixes (Example values, adjust as needed)
-OPENFLOW_COOKIE_PREFIX = 0xcafe # For Rules
-OPENFLOW_GATEWAY_COOKIE_PREFIX = 0xbeef # For Gateways
+# Префиксы cookie для идентификации типа OpenFlow записей
+OPENFLOW_COOKIE_PREFIX = 0xcafe         # Идентификатор правил маршрутизации
+OPENFLOW_GATEWAY_COOKIE_PREFIX = 0xbeef # Идентификатор шлюзов
 
-# Agent configuration
+# ===================================================================================
+# КОНФИГУРАЦИЯ АГЕНТА ВАЛИДАЦИИ
+# ===================================================================================
+# Параметры подключения к агенту для выполнения дополнительных проверок состояния
 AGENT = {
     "host": "127.0.0.1",
     "port": 8000,
     "base_path": "/api",
-    "description": "Агент для генерации трафика и проверки состояния"
+    "description": "Агент для генерации тестового трафика и валидации состояния системы"
 }
 
-# Service configurations
+# ===================================================================================
+# КОНФИГУРАЦИЯ МИКРОСЕРВИСОВ
+# ===================================================================================
+# Словарь конфигураций REST API микросервисов
+# Формат: {"service_name": {"host": str, "port": int, "base_path": str}}
+# Для мультипортовых сервисов: {"service_name": [{"host": ..., "name": ...}, ...]}
 SERVICES = {
     "vswitch": [
         {
@@ -96,8 +128,21 @@ SERVICES = {
     }
 }
 
-# Конфигурация SSH туннелей для автоматического проброса портов
-# Ключ: имя сервиса, Значение: (локальный_порт, удаленный_порт, удаленный_хост)
+# ===================================================================================
+# КОНФИГУРАЦИЯ SSH ТУННЕЛЕЙ
+# ===================================================================================
+# Параметры SSH port forwarding для проксирования TCP соединений к микросервисам
+#
+# ФОРМАТ: dict[str, tuple[int, int, str]]
+#     Ключ: service_name - Идентификатор сервиса
+#     Значение: (local_port, remote_port, remote_host)
+#         local_port: Локальный порт для bind (127.0.0.1:<local_port>)
+#         remote_port: Удалённый порт назначения
+#         remote_host: IP адрес целевого хоста на удалённой стороне
+#
+# ИСПОЛЬЗОВАНИЕ:
+#     local_port, remote_port, remote_host = TUNNEL_CONFIG["core"]
+#     ssh -L 127.0.0.1:<local_port>:<remote_host>:<remote_port> user@jump_host
 TUNNEL_CONFIG = {
     "mirada-agent": (8000, 8000, "127.0.0.1"),
     "cluster": (9933, 9933, "192.0.2.193"),
